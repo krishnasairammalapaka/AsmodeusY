@@ -1,0 +1,7 @@
+your_project/
+├── app.py
+├── static/
+│   └── css/
+│       └── styles.css
+└── templates/
+    └── index.html 

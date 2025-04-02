@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Services - AsmodeusY</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Add AOS library for scroll animations -->
+    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
+    <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/web3@1.5.2/dist/web3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script>
+        // Contract ABI and address
+        const contractABI = [
+            {
+                "inputs": [
+                    {
+                        "internalType": "bytes32",
+                        "name": "_hash",
+                        "type": "bytes32"
+                    }
+                ],
+                "name": "verifyDocument",
+                "outputs": [],
+                "stateMutability": "payable",
+                "type": "function"
+            },
+            {
+                "anonymous": false,
+                "inputs": [
+                    {
+                        "indexed": true,
+                        "internalType": "bytes32",
+                        "name": "hash",
+                        "type": "bytes32"
+                    },
+                    {
+                        "indexed": true,
+                        "internalType": "address",
+                        "name": "owner",
+                        "type": "address"
+                    },
+                    {
+                        "indexed": false,
+                        "internalType": "uint256",
+                        "name": "timestamp",
+                        "type": "uint256"
+                    }
+                ],
+                "name": "DocumentVerified",
+                "type": "event"
+            }
+        ];
+        
+        // Update this with your actual deployed contract address
+        const contractAddress = '0x5FbDB2315678afecb367f032d93F642f64180aa3'; // Example address
+
+        let web3;
+        let contract;
+        let userAccount;
+
+        // Check if MetaMask is installed
+        async function checkMetaMaskInstalled() {
+            if (typeof window.ethereum === 'undefined') {
+                showNotification('Please install MetaMask to use this feature', 'error');
+                return false;
+            }
+            return true;
+        }
+
+        // Initialize Web3 and contract
+        async function initWeb3() {
+            try {
+                if (!await checkMetaMaskInstalled()) return false;
+
+                // Request account access
+                const accounts = await window.ethereum.request({
+                    method: 'eth_requestAccounts',
+                });
+
+                // Get the current network ID
+                const networkId = await window.ethereum.request({
+                    method: 'net_version'
+                });
+
+                // Check if we're on the correct network (e.g., Sepolia testnet = 11155111)
+                if (networkId !== '11155111') { // Change this ID based on your target network
+                    try {
+                        // Request network switch
+                        await window.ethereum.request({
+                            method: 'wallet_switchEthereumChain',
+                            params: [{ chainId: '0xaa36a7' }], // Sepolia chainId in hex
+                        });
+                    } catch (switchError) {
+                        showNotification('Please switch to Sepolia testnet in MetaMask', 'error');
+                        return false;
+                    }
+                }
+
+                web3 = new Web3(window.ethereum);
+                userAccount = accounts[0];
+
+                // Initialize contract
+                contract = new web3.eth.Contract(contractABI, contractAddress);
+
+                // Update UI to show connected state
+                updateConnectionStatus(true);
+
+                // Listen for account changes
+                window.ethereum.on('accountsChanged', handleAccountsChanged);
+                window.ethereum.on('chainChanged', handleChainChanged);
+
+                console.log('Web3 initialized with account:', userAccount);
+                showNotification('Connected to MetaMask successfully!');
+                return true;
+
+            } catch (error) {
+                console.error('Error initializing Web3:', error);
+                showNotification('Failed to connect to MetaMask. Please try again.', 'error');
+                return false;
+            }
+        }
+
+        // Handle account changes
+        function handleAccountsChanged(accounts) {
+            if (accounts.length === 0) {
+                // MetaMask is locked or the user has not connected any accounts
+                showNotification('Please connect to MetaMask.', 'error');
+                updateConnectionStatus(false);
+            } else if (accounts[0] !== userAccount) {
+                userAccount = accounts[0];
+                updateConnectionStatus(true);
+                showNotification('Account changed to: ' + userAccount.slice(0, 6) + '...');
+            }
+        }
+
+        // Handle chain/network changes
+        function handleChainChanged() {
+            // Reload the page
+            window.location.reload();
+        }
+
+        // Update UI connection status
+        function updateConnectionStatus(connected) {
+            const connectButton = document.getElementById('connect-wallet');
+            const verifyButton = document.querySelector('button[type="submit"]');
+            
+            if (connected) {
+                connectButton.innerHTML = 'Connected: ' + userAccount.slice(0, 6) + '...';
+                connectButton.classList.remove('bg-red-600', 'hover:bg-red-700');
+                connectButton.classList.add('bg-green-600', 'hover:bg-green-700');
+                verifyButton.disabled = false;
+            } else {
+                connectButton.innerHTML = 'Connect Wallet';
+                connectButton.classList.remove('bg-green-600', 'hover:bg-green-700');
+                connectButton.classList.add('bg-red-600', 'hover:bg-red-700');
+                verifyButton.disabled = true;
+            }
+        }
+
+        // Add connect wallet button to the UI
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Add connect wallet button to the form
+            const form = document.getElementById('verificationForm');
+            const connectButtonHTML = `
+                <div class="flex justify-center mb-4">
+                    <button type="button" id="connect-wallet" 
+                        class="bg-red-600 text-white px-6 py-2 rounded-lg font-medium 
+                        hover:bg-red-700 transition-all duration-300 flex items-center space-x-2">
+                        Connect Wallet
+                    </button>
+                </div>
+            `;
+            form.insertAdjacentHTML('afterbegin', connectButtonHTML);
+
+            // Add click handler for connect button
+            document.getElementById('connect-wallet').addEventListener('click', initWeb3);
+
+            // Disable verify button initially
+            const verifyButton = document.querySelector('button[type="submit"]');
+            verifyButton.disabled = true;
+
+            // Check if already connected
+            if (typeof window.ethereum !== 'undefined' && window.ethereum.selectedAddress) {
+                await initWeb3();
+            }
+        });
+    </script>
+</head>
+<body class="bg-gradient-to-b from-gray-900 via-gray-800 to-gray-900 text-white">
+    <!-- Navbar -->
+    <nav class="bg-gray-900/90 fixed w-full z-50 backdrop-blur-md border-b border-gray-800">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex-shrink-0 flex items-center">
+                    <img class="h-10 w-10 mr-3" src="https://cdn-icons-png.flaticon.com/512/2906/2906274.png" alt="Logo">
+                    <span class="text-2xl font-['Orbitron'] text-white">Asmodeus<span class="text-blue-500 font-bold text-3xl hover:text-blue-400 transition-colors duration-300">Y</span></span>
+                </div>
+                
+                <div class="hidden md:block">
+                    <div class="flex items-baseline space-x-4">
+                        <a href="/" class="text-gray-300 hover:bg-blue-600 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition-all">Home</a>
+                        <a href="/#about" class="text-gray-300 hover:bg-blue-600 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition-all">About</a>
+                        <a href="/services" class="bg-blue-600 text-white px-3 py-2 rounded-md text-sm font-medium transition-all hover:bg-blue-700">Services</a>
+                        <a href="#" class="text-gray-300 hover:bg-blue-600 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition-all">Contact</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Services Header -->
+    <section class="pt-32 pb-12 relative">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center" data-aos="fade-up">
+                <h1 class="text-4xl font-bold text-white mb-4">Document Verification Services</h1>
+                <p class="text-gray-400 max-w-2xl mx-auto">Secure and efficient document verification powered by blockchain technology.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Document Upload Section -->
+    <section class="py-12">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="bg-gray-800/50 rounded-2xl p-8 backdrop-blur-sm border border-gray-700/50" data-aos="fade-up">
+                <form id="verificationForm" class="space-y-6" onsubmit="handleVerification(event)">
+                    <!-- Upload Area -->
+                    <div class="relative border-2 border-dashed border-gray-600 rounded-lg p-8 text-center hover:border-blue-500 transition-colors duration-300">
+                        <input type="file" name="document" id="document" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                        <div class="space-y-4">
+                            <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                                <path d="M24 8l12 12H28v12h-8V20H12L24 8z" stroke-width="2" stroke-linejoin="round"/>
+                                <path d="M4 28v12a4 4 0 004 4h32a4 4 0 004-4V28" stroke-width="2" stroke-linejoin="round"/>
+                            </svg>
+                            <div class="text-gray-400">
+                                <span class="font-medium text-blue-500">Click to upload</span> or drag and drop
+                                <p class="text-xs mt-2">PDF, DOC, DOCX up to 10MB</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Selected File Info -->
+                    <div id="file-info" class="hidden">
+                        <div class="bg-gray-700/50 rounded-lg p-4 flex items-center justify-between">
+                            <div class="flex items-center space-x-3">
+                                <svg class="h-6 w-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                                </svg>
+                                <span class="text-gray-200" id="file-name"></span>
+                            </div>
+                            <button type="button" id="remove-file" class="text-gray-400 hover:text-red-500 transition-colors">
+                                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Verify Button -->
+                    <div class="flex justify-center">
+                        <button type="submit" class="bg-blue-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-blue-700 transform hover:scale-105 transition-all duration-300 flex items-center space-x-2">
+                            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                            </svg>
+                            <span>Verify Document</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Verification Status -->
+            <div id="verification-status" class="mt-8 hidden">
+                <div class="bg-gray-800/50 rounded-2xl p-6 backdrop-blur-sm border border-gray-700/50">
+                    <div class="flex items-center space-x-4">
+                        <div class="h-12 w-12 rounded-full bg-green-500/20 flex items-center justify-center">
+                            <svg class="h-6 w-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-medium text-white">Document Verified</h3>
+                            <p class="text-gray-400 mt-1">Document hash has been successfully verified on the blockchain.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <script>
+        // Calculate document hash
+        async function calculateHash(file) {
+            const buffer = await file.arrayBuffer();
+            const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const hashHex = '0x' + hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            return hashHex;
+        }
+        
+        // Generate verification report
+        function generateReport(documentHash, timestamp, transactionHash) {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            
+            doc.setFontSize(16);
+            doc.text('Document Verification Report', 20, 20);
+            
+            doc.setFontSize(12);
+            doc.text('Document Hash: ' + documentHash, 20, 40);
+            doc.text('Verification Time: ' + new Date(timestamp * 1000).toLocaleString(), 20, 50);
+            doc.text('Verified By: ' + userAccount, 20, 60);
+            doc.text('Transaction Hash: ' + transactionHash, 20, 70);
+            
+            doc.save('verification-report.pdf');
+        }
+        
+        // Show notification
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `fixed bottom-4 right-4 ${type === 'success' ? 'bg-green-500' : 'bg-red-500'} text-white px-6 py-3 rounded-lg shadow-lg transform transition-all duration-500 translate-y-0`;
+            notification.innerHTML = `
+                <div class="flex items-center space-x-2">
+                    <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${type === 'success' ? 'M5 13l4 4L19 7' : 'M6 18L18 6M6 6l12 12'}"/>
+                    </svg>
+                    <span>${message}</span>
+                </div>
+            `;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.classList.add('translate-y-full');
+                setTimeout(() => notification.remove(), 500);
+            }, 5000);
+        }
+        
+        // Handle form submission
+        async function handleVerification(event) {
+            event.preventDefault();
+            
+            const submitButton = event.target.querySelector('button[type="submit"]');
+            if (!submitButton) return;
+            
+            try {
+                // Initialize Web3 if not already initialized
+                if (!web3 || !contract) {
+                    const initialized = await initWeb3();
+                    if (!initialized) {
+                        showNotification('Please connect your MetaMask wallet', 'error');
+                        return;
+                    }
+                }
+                
+                const fileInput = document.getElementById('document');
+                const file = fileInput.files[0];
+                
+                if (!file) {
+                    showNotification('Please select a file', 'error');
+                    return;
+                }
+                
+                // Show loading state
+                submitButton.disabled = true;
+                submitButton.innerHTML = 'Verifying...';
+                
+                // Calculate document hash
+                const documentHash = await calculateHash(file);
+                
+                try {
+                    // Call smart contract
+                    const result = await contract.methods.verifyDocument(documentHash)
+                        .send({ 
+                            from: userAccount,
+                            gas: 200000 // Specify gas limit
+                        });
+                    
+                    console.log('Transaction result:', result);
+                    
+                    // Show success message
+                    const verificationStatus = document.getElementById('verification-status');
+                    verificationStatus.classList.remove('hidden');
+                    
+                    // Generate and download report
+                    generateReport(documentHash, Math.floor(Date.now() / 1000), result.transactionHash);
+                    
+                    // Show success notification
+                    showNotification('Document verified successfully!');
+                    
+                } catch (error) {
+                    console.error('Contract interaction failed:', error);
+                    showNotification('Transaction failed: ' + error.message, 'error');
+                }
+                
+            } catch (error) {
+                console.error('Verification failed:', error);
+                showNotification('Verification failed. Please try again.', 'error');
+            } finally {
+                // Reset button state
+                submitButton.disabled = false;
+                submitButton.innerHTML = `
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                    </svg>
+                    <span>Verify Document</span>
+                `;
+            }
+        }
+        
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Initialize Web3
+            await initWeb3();
+            
+            // File upload handling
+            const fileInput = document.getElementById('document');
+            const fileInfo = document.getElementById('file-info');
+            const fileName = document.getElementById('file-name');
+            const removeFile = document.getElementById('remove-file');
+            
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    fileName.textContent = e.target.files[0].name;
+                    fileInfo.classList.remove('hidden');
+                }
+            });
+            
+            removeFile.addEventListener('click', () => {
+                fileInput.value = '';
+                fileInfo.classList.add('hidden');
+            });
+            
+            // Initialize AOS
+            AOS.init({
+                duration: 1000,
+                easing: 'ease-out-cubic',
+                once: true
+            });
+        });
+    </script>
+</body>
+</html> 
