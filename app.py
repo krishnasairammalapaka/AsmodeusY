@@ -58,5 +58,9 @@ def verify_document():
     
     return jsonify({'error': 'Invalid file type'}), 400
 
+@app.route('/contacts')
+def contacts():
+    return render_template('contacts.html')
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000) 
